@@ -81,6 +81,7 @@ cmd_upload() {
     require_bin
 
     log "Upload starting: $src -> $remote (split-gb=$split_gb retries=$retries)"
+    ensure_remote_folder "$remote"
 
     if [ "$split_gb" -gt 0 ]; then
         upload_dir_with_split "$src" "$remote" "$split_gb" "$retries" "$staging"
@@ -158,10 +159,23 @@ upload_dir_with_split() {
 }
 
 ensure_remote_folder() {
-    local path="$1"
-    # create-folder fails if it exists; that is fine, the upload merge
-    # strategy treats the existing folder as the target.
-    "$BIN" filesystem create-folder "$path" --json >> "$LOG" 2>&1 || true
+    # The CLI does not create missing parent folders on upload (verified on
+    # 0.8.0: "Node not found"). Walk the path and create each level; the
+    # create-folder call fails harmlessly when the folder already exists.
+    local path="$1" parent="" seg
+    local IFS='/'
+    for seg in $path; do
+        [ -n "$seg" ] || continue
+        # Skip the fixed root (/my-files, /devices, ...), it always exists.
+        if [ -z "$parent" ]; then
+            parent="/$seg"
+            continue
+        fi
+        # create-folder takes <parentPath> <name> and fails harmlessly when
+        # the folder already exists.
+        "$BIN" filesystem create-folder "$parent" "$seg" --json >> "$LOG" 2>&1 || true
+        parent="$parent/$seg"
+    done
 }
 
 upload_file_as_parts() {
@@ -217,12 +231,15 @@ cmd_verify() {
     [ -f "$file" ] || die "file not found: $file"
     require_bin
 
-    local base workdir
+    local base
     base="$(basename "$file")"
-    workdir="$(mktemp -d "${TMPDIR:-/tmp}/proton-verify.XXXXXX")"
-    trap 'rm -rf "$workdir"' EXIT
+    # Not local: the EXIT trap runs at script scope, after locals are gone.
+    VERIFY_WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/proton-verify.XXXXXX")"
+    workdir="$VERIFY_WORKDIR"
+    trap 'rm -rf "$VERIFY_WORKDIR"' EXIT
 
     log "Verify step 1/3: uploading $file to $remote"
+    ensure_remote_folder "$remote"
     upload_with_retries "$file" "$remote" 3
 
     log "Verify step 2/3: downloading $remote/$base back"
