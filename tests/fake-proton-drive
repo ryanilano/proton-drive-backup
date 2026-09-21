@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Fake Proton Drive CLI for tests. A "remote" is a local directory tree at
+# $FAKE_REMOTE. Mirrors the 0.8.0 command surface this wrapper uses:
+#   filesystem list <path> --json         one JSON object per child, name in "name"
+#   filesystem info <path> --json         200-ish JSON or exit 1 "Node not found"
+#   filesystem create-folder <parent> <name> --json
+#   filesystem upload <local>... <parent> --json ...
+#   filesystem download <path>... <localdir> --json ...
+# Knobs: FAKE_LOGGED_OUT=1 prints "You need to login first" and exits 1 (the
+# real message and code); FAKE_FAIL_UPLOADS=N fails the first N uploads;
+# FAKE_CORRUPT=<name> flips a byte when downloading that name; FAKE_CALLS
+# records every invocation, one per line.
+set -euo pipefail
+R="${FAKE_REMOTE:?}"
+[ -n "${FAKE_CALLS:-}" ] && printf '%s\n' "$*" >> "$FAKE_CALLS"
+if [ "${FAKE_LOGGED_OUT:-0}" = 1 ]; then echo "You need to login first"; exit 1; fi
+strip() { local p="${1#/}"; echo "$R/$p"; }
+group="${1:-}"; cmd="${2:-}"; shift 2 || true
+args=(); skip=0
+for a in "$@"; do
+  if [ "$skip" = 1 ]; then skip=0; continue; fi
+  case "$a" in
+    --file-conflict-strategy|--folder-conflict-strategy|-f|-d|-t) skip=1 ;;
+    --*|-j) ;;
+    *) args+=("$a") ;;
+  esac
+done
+case "$group $cmd" in
+  "filesystem list")
+    d="$(strip "${args[0]}")"; [ -d "$d" ] || { echo "Node not found: ${args[0]}"; exit 1; }
+    for e in "$d"/* "$d"/.[!.]*; do [ -e "$e" ] || continue
+      t="file"; [ -d "$e" ] && t="folder"
+      printf '{"uid":"x","type":"%s","name":"%s"}\n' "$t" "$(basename "$e")"; done ;;
+  "filesystem info")
+    p="$(strip "${args[0]}")"; [ -e "$p" ] || { echo "Node not found: ${args[0]}"; exit 1; }
+    printf '{"name":"%s"}\n' "$(basename "$p")" ;;
+  "filesystem create-folder")
+    p="$(strip "${args[0]}")"; [ -d "$p" ] || { echo "Node not found: ${args[0]}"; exit 1; }
+    [ -e "$p/${args[1]}" ] && { echo "Error: folder already exists: ${args[1]}"; exit 1; }
+    mkdir "$p/${args[1]}"; printf '{"name":"%s"}\n' "${args[1]}" ;;
+  "filesystem upload")
+    n="${FAKE_FAIL_UPLOADS:-0}"
+    if [ "$n" -gt 0 ]; then echo $((n-1)) > "${FAKE_FAIL_FILE:?}"; export FAKE_FAIL_UPLOADS=$((n-1)); echo "Error: simulated network failure"; exit 1; fi
+    parent="$(strip "${args[-1]}")"; [ -d "$parent" ] || { echo "Node not found: ${args[-1]}"; exit 1; }
+    for src in "${args[@]:0:${#args[@]}-1}"; do cp -R "$src" "$parent/"; done
+    echo '{"transferredItems":1,"failedItems":0}' ;;
+  "filesystem download")
+    dest="${args[-1]}"; mkdir -p "$dest"
+    for p in "${args[@]:0:${#args[@]}-1}"; do
+      src="$(strip "$p")"; [ -e "$src" ] || { echo "Node not found: $p"; exit 1; }
+      cp -R "$src" "$dest/"
+      if [ -n "${FAKE_CORRUPT:-}" ] && [ "$(basename "$src")" = "$FAKE_CORRUPT" ]; then
+        printf 'X' | dd of="$dest/$(basename "$src")" bs=1 seek=3 conv=notrunc 2>/dev/null; fi
+    done; echo '{"transferredItems":1}' ;;
+  "auth login") echo "fake login ok" ;;
+  *) echo "Command not found: $group $cmd"; exit 1 ;;
+esac
