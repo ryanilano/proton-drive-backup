@@ -1,0 +1,34 @@
+# /etc/systemd/system/proton-backup.service
+# One upload run. Paired with proton-backup.timer. Edit the ExecStart paths
+# for your box; everything else is safe to keep.
+[Unit]
+Description=Upload a directory to Proton Drive
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=backup
+Group=backup
+# Session store: pass (GPG-encrypted) is the headless choice. See README.
+Environment=PROTON_DRIVE_CREDENTIALS_STORE=pass
+Environment=PROTON_DRIVE_BIN=/usr/local/bin/proton-drive
+Environment=PROTON_BACKUP_LOG=/var/log/proton-backup/proton-backup.log
+Environment=PROTON_BACKUP_JSONL=/var/log/proton-backup/proton-backup.ndjson
+Environment=PROTON_BACKUP_SUMMARY=/var/log/proton-backup/proton-backup.summary.log
+# Zero trust: uncomment with your age recipient to encrypt before upload.
+# The identity is NOT needed here; keep it off this box.
+#Environment=PROTON_BACKUP_AGE_RECIPIENT=age1...
+# Refuse to run on a silently upgraded or missing CLI, then on a dead session.
+ExecStartPre=/usr/local/bin/proton-backup.sh check-cli
+ExecStartPre=/usr/local/bin/proton-backup.sh status
+ExecStart=/usr/local/bin/proton-backup.sh upload /srv/backup /my-files/backups/host --split-gb 8 --staging /var/tmp/proton-backup-staging
+# Exit codes 3 (CLI), 4 (session), 5 (upload), 6 (verify), 7 (disk) all land here.
+OnFailure=proton-backup-failed@%n.service
+Nice=10
+IOSchedulingClass=idle
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/var/log/proton-backup /var/tmp/proton-backup-staging /home/backup
+ProtectHome=read-only
+NoNewPrivileges=yes

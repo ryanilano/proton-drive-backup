@@ -1,0 +1,9 @@
+# /etc/systemd/system/proton-backup-failed@.service
+# OnFailure hook: writes the failing unit's last log lines somewhere an agent
+# or a person will see them. Replace the ExecStart with your own alert.
+[Unit]
+Description=Proton backup failure hook for %i
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'printf "%%s proton-backup FAILED unit=%s\\n" "$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)" "%i" >> /var/log/proton-backup/alerts.log; journalctl -u %i -n 20 --no-pager >> /var/log/proton-backup/alerts.log'

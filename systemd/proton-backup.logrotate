@@ -1,0 +1,19 @@
+# /etc/logrotate.d/proton-backup
+/var/log/proton-backup/proton-backup.log /var/log/proton-backup/*.ndjson /var/log/proton-backup/alerts.log {
+    weekly
+    rotate 8
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 backup backup
+}
+
+# The summary is one line per run; keep it whole for a year.
+/var/log/proton-backup/proton-backup.summary.log {
+    yearly
+    rotate 3
+    missingok
+    notifempty
+    create 0640 backup backup
+}
